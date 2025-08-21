@@ -1,0 +1,6 @@
+<launch>
+    <rosparam file="$(find nautic_annotator)/config/params.yaml" command="load"/>
+    <node name="display_time" pkg="nautic_annotator" type="display_time.py" output="screen"/>
+    <node name="detection" pkg="nautic_annotator" type="detection.py" output="screen"/>
+    <node name="nautic_annotator_node" pkg="nautic_annotator" type="nautic_annotator_node" output="screen"/> 
+</launch>

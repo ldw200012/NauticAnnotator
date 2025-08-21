@@ -1,0 +1,11 @@
+__pycache__/
+build/
+devel/
+data/
+.vscode/
+.catkin_workspace
+
+# Model Weight
+weights/
+
+*.zip

@@ -1,0 +1,18 @@
+node1_processtime: 0.00 # millisecond
+node2_processtime: 0.00 # millisecond
+
+point_by_point_z: -10 # meter
+point_by_point_r: 5.0 # meter
+point_by_point_tail_theta: 45.0 # degree
+point_by_point_tail_length: 20.0 # meter
+
+voxelize: true
+voxel_leaf_x: 0.2
+voxel_leaf_y: 0.2
+voxel_leaf_z: 0.2
+
+clustering_tolerance: 10 # meter
+clustering_size_min: 30 # points number
+clustering_size_max: 1000000 # points number
+
+n_points_fov_min: 30
