@@ -11,6 +11,7 @@
 #include <pcl/point_cloud.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/filters/voxel_grid.h>
+#include <pcl/filters/statistical_outlier_removal.h>
 #include <pcl/search/kdtree.h>
 #include <pcl/segmentation/extract_clusters.h>
 
@@ -36,15 +37,22 @@ struct Params {
   float tail_length = 0.0f;
   bool  voxelize = true;
   float voxel_leaf_x = 0.5f, voxel_leaf_y = 0.5f, voxel_leaf_z = 0.16f;
+  bool  denoise = true;
+  int   denoise_mean_k = 50;
+  float denoise_std_dev_mult = 1.0f;
   float cluster_tolerance = 1.0f;
   int cluster_size_min = 5, cluster_size_max = 25000;
   int n_points_fov_min = 30;
+  float closest_cluster_size_min_meters = 2.0f;
+  float filter_x_min = -5.0f, filter_x_max = 1.0f;
+  float filter_y_min = -1.0f, filter_y_max = 7.0f;
   std::string out_frame = kOutFrameDefault;
 } params;
 
-ros::Subscriber sub_cloud, sub_fov, sub_img, sub_bbox;
+ros::Subscriber sub_cloud, sub_fov, sub_img, sub_bbox, sub_original_img;
 ros::Publisher pub_vessel;
 sensor_msgs::Image::ConstPtr latest_img_msg;
+sensor_msgs::Image::ConstPtr latest_original_img_msg;
 std_msgs::Int32MultiArray::ConstPtr latest_bbox_msg;
 float arr_cam_fov[2] = {0.0f, 0.0f};
 bool cloud_cb_lock = true;
@@ -59,17 +67,65 @@ inline float planarRange(float x, float y) {
   return std::sqrt(x * x + y * y);
 }
 
+// Prefer node-private params (pnh) and fall back to global (nh)
+template <typename T>
+void loadParam(const ros::NodeHandle& pnh, const ros::NodeHandle& nh,
+               const std::string& key, T& out_value) {
+  if (!pnh.getParam(key, out_value)) {
+    nh.param(key, out_value, out_value);
+  }
+}
+
+float calculateClusterGeometricSize(const pcl::PointIndices& cluster, const CloudTP& cloud) {
+  if (cluster.indices.empty()) return 0.0f;
+  
+  // Find min and max coordinates
+  float min_x = std::numeric_limits<float>::max();
+  float min_y = std::numeric_limits<float>::max();
+  float min_z = std::numeric_limits<float>::max();
+  float max_x = -std::numeric_limits<float>::max();
+  float max_y = -std::numeric_limits<float>::max();
+  float max_z = -std::numeric_limits<float>::max();
+  
+  for (int idx : cluster.indices) {
+    const auto& pt = cloud->points[idx];
+    min_x = std::min(min_x, pt.x);
+    min_y = std::min(min_y, pt.y);
+    min_z = std::min(min_z, pt.z);
+    max_x = std::max(max_x, pt.x);
+    max_y = std::max(max_y, pt.y);
+    max_z = std::max(max_z, pt.z);
+  }
+  
+  // Calculate the diagonal length of the bounding box
+  float dx = max_x - min_x;
+  float dy = max_y - min_y;
+  float dz = max_z - min_z;
+  
+  return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
+
 inline bool passPointByPointFilters(float x, float y, float z,
   float z_min, float r_min, float tail_len, float tail_half_angle_rad) {
+  // Z-axis filter
   if (z < z_min) return false;
+  
+  // Bounded box filter: erase points within the rectangular region
+  if (x >= params.filter_x_min && x <= params.filter_x_max && 
+      y >= params.filter_y_min && y <= params.filter_y_max) return false;
+  
+  // Radial distance filter
   const float r = planarRange(x, y);
   if (r < r_min) return false;
+  
+  // Tail angle filter
   if (r < tail_len) {
     float th = std::atan2(y, x);
     float lo = -tail_half_angle_rad - static_cast<float>(M_PI) * 0.5f;
     float hi =  tail_half_angle_rad - static_cast<float>(M_PI) * 0.5f;
     if (th > lo && th < hi) return false;
   }
+  
   return true;
 }
 
@@ -79,6 +135,10 @@ void img_cb(const sensor_msgs::Image::ConstPtr& msg) {
 
 void bbox_cb(const std_msgs::Int32MultiArray::ConstPtr& msg) {
   latest_bbox_msg = msg;
+}
+
+void original_img_cb(const sensor_msgs::Image::ConstPtr& msg) {
+  latest_original_img_msg = msg;
 }
 
 void savePointCloudBin(const CloudTP& cloud, const std::string& filepath) {
@@ -126,6 +186,17 @@ void cloud_cb(const sensor_msgs::PointCloud2::ConstPtr& msg) {
     vg.filter(*cloud_ds);
   }
 
+  // Apply denoise filter if enabled
+  if (params.denoise && !cloud_ds->empty()) {
+    CloudTP denoised(new CloudT);
+    pcl::StatisticalOutlierRemoval<PointT> sor;
+    sor.setInputCloud(cloud_ds);
+    sor.setMeanK(params.denoise_mean_k);
+    sor.setStddevMulThresh(params.denoise_std_dev_mult);
+    sor.filter(*denoised);
+    cloud_ds = denoised;
+  }
+
   if (cloud_ds->empty()) {
     cloud_cb_lock = true;
     return;
@@ -156,7 +227,9 @@ void cloud_cb(const sensor_msgs::PointCloud2::ConstPtr& msg) {
         if (r < min_range) min_range = r;
       }
     }
-    if (n_in_fov >= params.n_points_fov_min && min_range < closest_range) {
+    float cluster_size = calculateClusterGeometricSize(idxs, cloud_ds);
+    if (n_in_fov >= params.n_points_fov_min && min_range < closest_range && 
+        cluster_size >= params.closest_cluster_size_min_meters) {
       closest_range = min_range;
       best_cluster = &idxs;
     }
@@ -190,21 +263,27 @@ void cloud_cb(const sensor_msgs::PointCloud2::ConstPtr& msg) {
         cv::imwrite(base_path + "/img_det.png", img);
         
         // Save cropped image if bounding box is available
-        if (latest_bbox_msg && latest_bbox_msg->data.size() >= 4) {
+        if (latest_bbox_msg && latest_bbox_msg->data.size() >= 4 && latest_original_img_msg) {
           int x1 = latest_bbox_msg->data[0];
           int y1 = latest_bbox_msg->data[1];
           int x2 = latest_bbox_msg->data[2];
           int y2 = latest_bbox_msg->data[3];
           
-          // Ensure coordinates are within image bounds
-          x1 = std::max(0, std::min(x1, img.cols - 1));
-          y1 = std::max(0, std::min(y1, img.rows - 1));
-          x2 = std::max(0, std::min(x2, img.cols - 1));
-          y2 = std::max(0, std::min(y2, img.rows - 1));
-          
-          if (x2 > x1 && y2 > y1) {
-            cv::Mat cropped_img = img(cv::Rect(x1, y1, x2 - x1, y2 - y1));
-            cv::imwrite(base_path + "/img_cropped.png", cropped_img);
+          try {
+            cv::Mat original_img = cv_bridge::toCvShare(latest_original_img_msg, "bgr8")->image;
+            
+            // Ensure coordinates are within image bounds
+            x1 = std::max(0, std::min(x1, original_img.cols - 1));
+            y1 = std::max(0, std::min(y1, original_img.rows - 1));
+            x2 = std::max(0, std::min(x2, original_img.cols - 1));
+            y2 = std::max(0, std::min(y2, original_img.rows - 1));
+            
+            if (x2 > x1 && y2 > y1) {
+              cv::Mat cropped_img = original_img(cv::Rect(x1, y1, x2 - x1, y2 - y1));
+              cv::imwrite(base_path + "/img_cropped.png", cropped_img);
+            }
+          } catch (cv_bridge::Exception& e) {
+            ROS_WARN("cv_bridge exception for original image: %s", e.what());
           }
         }
       } catch (cv_bridge::Exception& e) {
@@ -229,16 +308,25 @@ int main(int argc, char** argv) {
   nh.param("voxel_leaf_x",                params.voxel_leaf_x,      params.voxel_leaf_x);
   nh.param("voxel_leaf_y",                params.voxel_leaf_y,      params.voxel_leaf_y);
   nh.param("voxel_leaf_z",                params.voxel_leaf_z,      params.voxel_leaf_z);
+  nh.param("denoise",                     params.denoise,          params.denoise);
+  nh.param("denoise_mean_k",              params.denoise_mean_k,   params.denoise_mean_k);
+  nh.param("denoise_std_dev_mult",        params.denoise_std_dev_mult, params.denoise_std_dev_mult);
   nh.param("clustering_tolerance",        params.cluster_tolerance, params.cluster_tolerance);
   nh.param("clustering_size_min",         params.cluster_size_min,  params.cluster_size_min);
   nh.param("clustering_size_max",         params.cluster_size_max,  params.cluster_size_max);
   nh.param("n_points_fov_min",            params.n_points_fov_min,  params.n_points_fov_min);
+  nh.param("closest_cluster_size_min_meters", params.closest_cluster_size_min_meters, params.closest_cluster_size_min_meters);
+  nh.param("filter_x_min",                params.filter_x_min,      params.filter_x_min);
+  nh.param("filter_x_max",                params.filter_x_max,      params.filter_x_max);
+  nh.param("filter_y_min",                params.filter_y_min,      params.filter_y_min);
+  nh.param("filter_y_max",                params.filter_y_max,      params.filter_y_max);
   nh.param("out_frame",                   params.out_frame,         std::string(kOutFrameDefault));
 
   sub_cloud = nh.subscribe("/ouster2/points", 1, cloud_cb);
   sub_fov   = nh.subscribe("/nautic_annotator_node/cam_fov", 1, fov_cb);
   sub_img   = nh.subscribe("/nautic_annotator_node/detection_img", 1, img_cb);
   sub_bbox  = nh.subscribe("/nautic_annotator_node/bbox", 1, bbox_cb);
+  sub_original_img = nh.subscribe("/nautic_annotator_node/original_img", 1, original_img_cb);
   pub_vessel= nh.advertise<sensor_msgs::PointCloud2>("/nautic_annotator_node/points", 1);
 
   ros::spin();

@@ -53,6 +53,7 @@ It saves composites into `nautic_annotator/data/viewer/` as PNGs.
 ## 5) 🛠️ Tips & Troubleshooting
 - Always `source devel/setup.bash` before running `roslaunch` or Python scripts that rely on ROS packages.
 - If `rospack` cannot find a package, verify you built in the workspace root and sourced the workspace.
+- Adjust `closest_cluster_size_min_meters` in `config/params.yaml` to filter out small clusters based on their geometric size in meters.
 - For PointPillars CUDA ops: ensure GPU drivers, CUDA toolkit, and PyTorch versions are compatible.
 
 ## 6) 🗺️ Repository Layout (key parts)

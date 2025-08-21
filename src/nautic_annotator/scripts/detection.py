@@ -38,14 +38,24 @@ class DetectionNode():
         self.infer_size = [320, 320]
         self.backbone = "damoyolo_tinynasL35_M"
 
-        # Intrinsic calibration (example values — update for your camera)
-        self.fx0, self.fy0 = 646.7476, 645.9632
-        self.cx0, self.cy0 = 646.2584, 362.9647
-        self.k1_0, self.k2_0, self.p1_0, self.p2_0, self.k3_0 = 0, 0, 0, 0, 0
-        self.fx1, self.fy1 = 644.8154, 644.0333
-        self.ppx1, self.ppy1 = 646.2584, 362.9647
-        self.W0, self.H0 = 1280, 720
-        self.W1, self.H1 = 1280, 720
+        # Load camera intrinsics from ROS parameters
+        self.fx0 = rospy.get_param('~camera_fx0', 646.7476)
+        self.fy0 = rospy.get_param('~camera_fy0', 645.9632)
+        self.cx0 = rospy.get_param('~camera_cx0', 646.2584)
+        self.cy0 = rospy.get_param('~camera_cy0', 362.9647)
+        self.k1_0 = rospy.get_param('~camera_k1_0', 0.0)
+        self.k2_0 = rospy.get_param('~camera_k2_0', 0.0)
+        self.p1_0 = rospy.get_param('~camera_p1_0', 0.0)
+        self.p2_0 = rospy.get_param('~camera_p2_0', 0.0)
+        self.k3_0 = rospy.get_param('~camera_k3_0', 0.0)
+        self.fx1 = rospy.get_param('~camera_fx1', 644.8154)
+        self.fy1 = rospy.get_param('~camera_fy1', 644.0333)
+        self.ppx1 = rospy.get_param('~camera_ppx1', 646.2584)
+        self.ppy1 = rospy.get_param('~camera_ppy1', 362.9647)
+        self.W0 = rospy.get_param('~camera_W0', 1280)
+        self.H0 = rospy.get_param('~camera_H0', 720)
+        self.W1 = rospy.get_param('~camera_W1', 1280)
+        self.H1 = rospy.get_param('~camera_H1', 720)
 
         sx, sy = self.W0 / self.W1, self.H0 / self.H1
         self.K0 = np.array([[self.fx0, 0, self.cx0], [0, self.fy0, self.cy0], [0, 0, 1]], dtype=np.float64)
@@ -72,6 +82,7 @@ class DetectionNode():
         self.img_pub = rospy.Publisher('/nautic_annotator_node/detection_img', Image, queue_size=1)
         self.marker_pub = rospy.Publisher('/nautic_annotator_node/cam_fov_markers', MarkerArray, queue_size=1)
         self.bbox_pub = rospy.Publisher('/nautic_annotator_node/bbox', Int32MultiArray, queue_size=1)
+        self.original_img_pub = rospy.Publisher('/nautic_annotator_node/original_img', Image, queue_size=1)
 
     def _pad_image(self, img, target_size):
         n, c, h, w = img.shape
@@ -138,7 +149,12 @@ class DetectionNode():
             self.marker_pub.publish(marker_array)
             return
 
-        origin = [-0.035, 0.121, 0.224]
+        # Load LiDAR position from ROS parameters
+        origin = [
+            rospy.get_param('~lidar_position_x', -0.035),
+            rospy.get_param('~lidar_position_y', 0.121),
+            rospy.get_param('~lidar_position_z', 0.224)
+        ]
         theta_deg_left = math.degrees(left_theta)
         theta_deg_right = math.degrees(right_theta)
 
@@ -208,6 +224,12 @@ class DetectionNode():
 
         try:
             self.img_pub.publish(self.bridge.cv2_to_imgmsg(img_with_boxes, "bgr8"))
+        except CvBridgeError as e:
+            rospy.logerr(f"CvBridge Error: {e}")
+
+        # Publish the original rectified image (without bounding boxes) for cropping
+        try:
+            self.original_img_pub.publish(self.bridge.cv2_to_imgmsg(rectified, "bgr8"))
         except CvBridgeError as e:
             rospy.logerr(f"CvBridge Error: {e}")
 
