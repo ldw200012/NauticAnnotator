@@ -11,7 +11,7 @@ import importlib
 import torch
 import cv2
 
-from std_msgs.msg import Float32MultiArray
+from std_msgs.msg import Float32MultiArray, Int32MultiArray
 from sensor_msgs.msg import CompressedImage, Image
 from cv_bridge import CvBridge, CvBridgeError
 from visualization_msgs.msg import Marker, MarkerArray
@@ -71,6 +71,7 @@ class DetectionNode():
         self.fov_pub = rospy.Publisher('/nautic_annotator_node/cam_fov', Float32MultiArray, queue_size=1)
         self.img_pub = rospy.Publisher('/nautic_annotator_node/detection_img', Image, queue_size=1)
         self.marker_pub = rospy.Publisher('/nautic_annotator_node/cam_fov_markers', MarkerArray, queue_size=1)
+        self.bbox_pub = rospy.Publisher('/nautic_annotator_node/bbox', Int32MultiArray, queue_size=1)
 
     def _pad_image(self, img, target_size):
         n, c, h, w = img.shape
@@ -194,6 +195,11 @@ class DetectionNode():
                 left_px, right_px = int(box[0]), int(box[2])
                 cam_left_theta = (img_w/2 - left_px) * self.cam_fov / img_w + self.cam_pad + self.cam_bias
                 cam_right_theta = (img_w/2 - right_px) * self.cam_fov / img_w - self.cam_pad - self.cam_bias
+                
+                # Publish bounding box coordinates
+                bbox_msg = Int32MultiArray()
+                bbox_msg.data = [int(box[0]), int(box[1]), int(box[2]), int(box[3])]
+                self.bbox_pub.publish(bbox_msg)
 
         self.fov_pub.publish(Float32MultiArray(data=[cam_left_theta, cam_right_theta]))
         self.publish_fov_marker_array(cam_left_theta, cam_right_theta)

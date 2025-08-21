@@ -14,6 +14,7 @@ def visualize_folder(folder_path, save_folder, idx):
     raw_path = os.path.join(folder_path, 'pts_raw.bin')
     cluster_path = os.path.join(folder_path, 'pts_xyz.bin')
     img_path = os.path.join(folder_path, 'img_det.png')
+    cropped_path = os.path.join(folder_path, 'img_cropped.png')
 
     if not all(os.path.exists(p) for p in [raw_path, cluster_path, img_path]):
         print(f"Skipping {folder_path}: missing one or more files.")
@@ -27,17 +28,36 @@ def visualize_folder(folder_path, save_folder, idx):
         return
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-    fig = plt.figure(figsize=(16, 10))
-    gs = fig.add_gridspec(2, 2, height_ratios=[1, 1.2])
+    # Load cropped image if available
+    cropped_img = None
+    if os.path.exists(cropped_path):
+        cropped_img = cv2.imread(cropped_path)
+        if cropped_img is not None:
+            cropped_img = cv2.cvtColor(cropped_img, cv2.COLOR_BGR2RGB)
 
-    # Image subplot (top row)
+    fig = plt.figure(figsize=(16, 12))
+    gs = fig.add_gridspec(3, 2, height_ratios=[1, 1, 1.2])
+
+    # Full detection image subplot (top row)
     ax_img = fig.add_subplot(gs[0, :])
     ax_img.imshow(img_rgb)
     ax_img.set_title("Detection Image")
     ax_img.axis('off')
 
+    # Cropped image subplot (second row)
+    if cropped_img is not None:
+        ax_cropped = fig.add_subplot(gs[1, :])
+        ax_cropped.imshow(cropped_img)
+        ax_cropped.set_title("Cropped Boat Image")
+        ax_cropped.axis('off')
+    else:
+        ax_cropped = fig.add_subplot(gs[1, :])
+        ax_cropped.text(0.5, 0.5, 'No cropped image available', ha='center', va='center', transform=ax_cropped.transAxes)
+        ax_cropped.set_title("Cropped Boat Image")
+        ax_cropped.axis('off')
+
     # Full raw pointcloud
-    ax_raw = fig.add_subplot(gs[1, 0])
+    ax_raw = fig.add_subplot(gs[2, 0])
     ax_raw.scatter(-pts_raw[:, 1], pts_raw[:, 0], c='gray', s=0.5)
     ax_raw.set_title("Full Pointcloud (Top-down)")
     ax_raw.set_xlabel('-Y [m]')
@@ -46,7 +66,7 @@ def visualize_folder(folder_path, save_folder, idx):
     ax_raw.set_ylim(-10, 100)
 
     # Best cluster overlay
-    ax_overlay = fig.add_subplot(gs[1, 1])
+    ax_overlay = fig.add_subplot(gs[2, 1])
     ax_overlay.scatter(-pts_raw[:, 1], pts_raw[:, 0], c='lightgray', s=0.5, label='Raw')
     ax_overlay.scatter(-pts_cluster[:, 1], pts_cluster[:, 0], c='red', s=1.0, label='Best Cluster')
     ax_overlay.set_title("Cluster Overlay (Top-down)")

@@ -19,8 +19,8 @@ pip install numpy opencv-python matplotlib rospkg
 
 ## 2) ⚙️ Setup
 ```
-git clone https://github.com/ldw200012/Boat_Scanner.git
-cd Boat_Scanner
+git clone https://github.com/ldw200012/NauticAnnotator.git
+cd NauticAnnotator
 catkin_make
 source devel/setup.bash   # or setup.zsh
 ```
@@ -46,6 +46,7 @@ The viewer scans `nautic_annotator/data/object/*/` for:
 - `pts_raw.bin` (float32 XYZ[I])
 - `pts_xyz.bin` (cluster points)
 - `img_det.png` (detection image)
+- `img_cropped.png` (cropped boat image)
 
 It saves composites into `nautic_annotator/data/viewer/` as PNGs.
 
@@ -56,7 +57,7 @@ It saves composites into `nautic_annotator/data/viewer/` as PNGs.
 
 ## 6) 🗺️ Repository Layout (key parts)
 ```
-Boat_Scanner/
+NauticAnnotator/
   src/
     nautic_annotator/                    # ROS package for annotating/launch
       launch/nautic_annotator.launch

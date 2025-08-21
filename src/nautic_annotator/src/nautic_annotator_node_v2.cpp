@@ -5,6 +5,7 @@
 #include <sensor_msgs/Image.h>
 #include <sensor_msgs/PointCloud2.h>
 #include <std_msgs/Float32MultiArray.h>
+#include <std_msgs/Int32MultiArray.h>
 
 #include <pcl/point_types.h>
 #include <pcl/point_cloud.h>
@@ -41,9 +42,10 @@ struct Params {
   std::string out_frame = kOutFrameDefault;
 } params;
 
-ros::Subscriber sub_cloud, sub_fov, sub_img;
+ros::Subscriber sub_cloud, sub_fov, sub_img, sub_bbox;
 ros::Publisher pub_vessel;
 sensor_msgs::Image::ConstPtr latest_img_msg;
+std_msgs::Int32MultiArray::ConstPtr latest_bbox_msg;
 float arr_cam_fov[2] = {0.0f, 0.0f};
 bool cloud_cb_lock = true;
 ros::Time process_start, process_end;
@@ -73,6 +75,10 @@ inline bool passPointByPointFilters(float x, float y, float z,
 
 void img_cb(const sensor_msgs::Image::ConstPtr& msg) {
   latest_img_msg = msg;
+}
+
+void bbox_cb(const std_msgs::Int32MultiArray::ConstPtr& msg) {
+  latest_bbox_msg = msg;
 }
 
 void savePointCloudBin(const CloudTP& cloud, const std::string& filepath) {
@@ -182,6 +188,25 @@ void cloud_cb(const sensor_msgs::PointCloud2::ConstPtr& msg) {
       try {
         cv::Mat img = cv_bridge::toCvShare(latest_img_msg, "bgr8")->image;
         cv::imwrite(base_path + "/img_det.png", img);
+        
+        // Save cropped image if bounding box is available
+        if (latest_bbox_msg && latest_bbox_msg->data.size() >= 4) {
+          int x1 = latest_bbox_msg->data[0];
+          int y1 = latest_bbox_msg->data[1];
+          int x2 = latest_bbox_msg->data[2];
+          int y2 = latest_bbox_msg->data[3];
+          
+          // Ensure coordinates are within image bounds
+          x1 = std::max(0, std::min(x1, img.cols - 1));
+          y1 = std::max(0, std::min(y1, img.rows - 1));
+          x2 = std::max(0, std::min(x2, img.cols - 1));
+          y2 = std::max(0, std::min(y2, img.rows - 1));
+          
+          if (x2 > x1 && y2 > y1) {
+            cv::Mat cropped_img = img(cv::Rect(x1, y1, x2 - x1, y2 - y1));
+            cv::imwrite(base_path + "/img_cropped.png", cropped_img);
+          }
+        }
       } catch (cv_bridge::Exception& e) {
         ROS_WARN("cv_bridge exception: %s", e.what());
       }
@@ -213,6 +238,7 @@ int main(int argc, char** argv) {
   sub_cloud = nh.subscribe("/ouster2/points", 1, cloud_cb);
   sub_fov   = nh.subscribe("/nautic_annotator_node/cam_fov", 1, fov_cb);
   sub_img   = nh.subscribe("/nautic_annotator_node/detection_img", 1, img_cb);
+  sub_bbox  = nh.subscribe("/nautic_annotator_node/bbox", 1, bbox_cb);
   pub_vessel= nh.advertise<sensor_msgs::PointCloud2>("/nautic_annotator_node/points", 1);
 
   ros::spin();
