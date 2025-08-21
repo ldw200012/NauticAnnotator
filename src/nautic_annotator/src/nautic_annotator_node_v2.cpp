@@ -174,7 +174,7 @@ void cloud_cb(const sensor_msgs::PointCloud2::ConstPtr& msg) {
 
   // Saving logic
   if (best_cluster) {
-    std::string base_path = ros::package::getPath("nautic_annotator") + "/data/" + std::to_string(save_index++);
+    std::string base_path = ros::package::getPath("nautic_annotator") + "/data/object/" + std::to_string(save_index++);
     std::filesystem::create_directories(base_path);
     savePointCloudBin(raw, base_path + "/pts_raw.bin");
     savePointCloudBin(out_cloud, base_path + "/pts_xyz.bin");
